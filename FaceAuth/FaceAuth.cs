@@ -1,5 +1,4 @@
-﻿using System.Xml;
-using Emgu.CV;
+﻿using Emgu.CV;
 using Emgu.CV.Face;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
@@ -9,29 +8,59 @@ namespace FaceAuth;
 public class FaceAuthProvider
 {
     #region Vaiable
-
+    private int[] FaceLabels;
     private float FaceDistance = -1;
-    private int FaceThreshold = 3000;
-    private string dbFolderName = "face_db";
-    private FaceRecognizer recognizer = new FisherFaceRecognizer(0, 3500); //4000
+    private int FaceThreshold = 3500;
+    private const string dbFolderName = "TrainedFaces";
+    private FaceRecognizer recognizer = new FisherFaceRecognizer(0, 3500);
+    FaceRecognizer.PredictionResult result = new();
     private List<Image<Gray, byte>> imgList = new();
-    private List<int> imgIds = new() { };
-    private bool isTrained = false;
+    private bool _isTrained;
 
     #endregion
 
-    public void RegisterIFace(string name, OpenCvSharp.Mat face)
+    public bool Recognize(Mat face, int FaceThresh = -1)
+    {
+        if (_isTrained)
+        {
+            result = recognizer.Predict(face.ToImage<Gray, byte>());
+
+            if (result.Label != -1 && result.Label >= FaceLabels[0] && result.Label <= FaceLabels[^1])
+            {
+                FaceDistance = (float)result.Distance;
+                    
+                if (FaceThresh > -1) FaceThreshold = FaceThresh;
+
+
+                if (FaceDistance < FaceThreshold) return true;
+
+                else return false;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        else
+        {
+            throw new Exception("Recognition Model not trained");
+        }
+    }
+
+
+    public void RegisterIFace(string name, Mat face)
     {
         Random rand = new Random();
-        string facename = "face_" + name + "_" + rand.Next() + ".jpg";
-        string folder = "TrainedFaces";
+        string filename = "face_" + name + "_" + rand.Next() + ".jpg";
+        const string folder = "TrainedFaces";
         if (!Directory.Exists(folder))
         {
             Directory.CreateDirectory(folder);
         }
-        facename = Path.Combine(folder, facename);
 
-        face.SaveImage(facename);
+        filename = Path.Combine(folder, filename);
+
+        face.ToImage<Gray, byte>().Save(filename);
     }
 
     public void LoadFaceRecognizer()
@@ -43,25 +72,32 @@ public class FaceAuthProvider
         }
         else
         {
-            string[] files = Directory.GetFiles(dbFolderName, "*.jpg", SearchOption.AllDirectories);
-
-            if (files.Length != 0)
+            if (!_isTrained)
             {
-                Parallel.ForEach(files, file => { imgList.Add(new Image<Gray, byte>(file)); });
+                string[] files = Directory.GetFiles(dbFolderName, "*.jpg", SearchOption.AllDirectories);
 
-                using VectorOfMat vectorOfMat = new VectorOfMat();
-                using VectorOfInt vectorOfInt = new VectorOfInt(imgIds.ToArray());
-                vectorOfMat.Push(imgList.ToArray());
+                if (files.Length != 0)
+                {
+                    foreach (var file in files)
+                    {
+                        imgList.Add(new Image<Gray, byte>(file));
+                    }
 
-                try
-                {
-                    recognizer.Train(vectorOfMat, vectorOfInt);
-                    isTrained = true;
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine(e.Message);
-                    throw;
+
+                    using VectorOfMat vectorOfMat = new VectorOfMat();
+                    using VectorOfInt vectorOfInt = new VectorOfInt(FaceLabels = Enumerable.Range(0, files.Length).ToArray());
+                    vectorOfMat.Push(imgList.ToArray());
+
+                    try
+                    {
+                        recognizer.Train(vectorOfMat, vectorOfInt);
+                        _isTrained = true;
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e.Message);
+                        throw;
+                    }
                 }
             }
         }
