@@ -1,4 +1,7 @@
 ﻿using System.Drawing;
+using System.Reflection;
+using System.Xml.Linq;
+using System.Xml.XPath;
 using Emgu.CV;
 using Emgu.CV.Dnn;
 using Emgu.CV.Face;
@@ -7,54 +10,69 @@ using Emgu.CV.Util;
 
 namespace FaceAuth;
 
+/// <summary>
+/// A class that generates methods for distinct and identifying faces using a neural network and the FisherFaceRecognizer algorithm.
+/// </summary>
 public class FaceAuthProvider
 {
     #region Vaiable
 
     private Net net;
     private FaceRecognizer Recognizer;
-    private FaceRecognizer.PredictionResult result = new();
+    private FaceRecognizer.PredictionResult result;
 
 
-    private List<Image<Gray, byte>> imgList = new();
+    private List<Image<Gray, byte>> imgList;
     private VideoCapture capture;
-
-    private const string dbFolderName = "TrainedFaces";
 
     private int[] FaceLabels;
     private int FaceThreshold = 3500;
 
-    const int Width = 200;
-    const int Height = 200;
+    public readonly int Width = 196;
+    public readonly int Height = 257;
 
     private float FaceDistance = -1;
     private bool _isTrained;
 
-    string config = Directory.GetCurrentDirectory() + "\\Assets\\deploy.prototxt";
-    string model = Directory.GetCurrentDirectory() + "\\Assets\\res10_300x300_ssd_iter_140000_fp16.caffemodel";
+    private const string DbFolderName = "TrainedFaces";
+    
+    private string config = Directory.GetCurrentDirectory() + "\\Assets\\deploy.prototxt";
+    private string model = Directory.GetCurrentDirectory() + "\\Assets\\res10_300x300_ssd_iter_140000_fp16.caffemodel";
 
     #endregion
+    
 
-
+    /// <summary>
+    /// The class constructor that initializes the neural network and the face recognizer.
+    /// </summary>
     public FaceAuthProvider()
     {
         net = DnnInvoke.ReadNetFromCaffe(config, model);
         Recognizer = new FisherFaceRecognizer(0, FaceThreshold);
+        imgList = new List<Image<Gray, byte>>();
     }
 
+    /// <summary>
+    /// Method that initializes capturing video from the camera.
+    /// </summary>
+    /// <returns>Returns true if the camera was opened successfully, false otherwise.</returns>
     public bool CameraInitialize()
     {
+        capture = new VideoCapture(0);
+
         if (!capture.IsOpened)
         {
-            using (capture = new(0))
-            {
-                return false;
-            }
+            return false;
         }
 
         return true;
     }
 
+    /// <summary>
+    /// A method that detects a face in a camera image using a neural network.
+    /// </summary>
+    /// <returns>Returns a Mat containing the image of the face, or null if no face was found.</returns>
+    /// <exception cref="Exception">Throws an exception if the camera image is empty.</exception>
     public Mat? FaceDetect()
     {
         using var frame = new Mat();
@@ -68,11 +86,11 @@ public class FaceAuthProvider
         var blob = DnnInvoke.BlobFromImage(frame, 1.0, new Size(250, 250),
             new MCvScalar(104, 117, 123), false, false);
 
-        net?.SetInput(blob);
+        net.SetInput(blob);
 
 
         // Getting face detections
-        var detections = net?.Forward("detection_out");
+        var detections = net.Forward("detection_out");
 
         if (detections != null)
         {
@@ -96,22 +114,33 @@ public class FaceAuthProvider
         return null;
     }
 
-    public bool Recognize(Mat face, int FaceThresh = -1)
+    /// <summary>
+    /// A method that recognizes a face using the FisherFaceRecognizer algorithm.
+    /// </summary>
+    /// <returns>Returns true if the face is recognized, false otherwise.</returns>
+    /// <exception cref="Exception">Throws an exception if the recognition model is not trained.</exception>
+    public bool Recognize()
     {
         if (_isTrained)
         {
-            result = Recognizer.Predict(face.ToImage<Gray, byte>());
-
-            if (result.Label != -1 && result.Label >= FaceLabels[0] && result.Label <= FaceLabels[^1])
+            Mat? face = FaceDetect();
+            if (face != null)
             {
-                FaceDistance = (float)result.Distance;
+                result = Recognizer.Predict(face.ToImage<Gray, byte>());
 
-                if (FaceThresh > -1) FaceThreshold = FaceThresh;
+                if (result.Label != -1 && result.Label >= FaceLabels[0] && result.Label <= FaceLabels[^1])
+                {
+                    FaceDistance = (float)result.Distance;
 
 
-                if (FaceDistance < FaceThreshold) return true;
+                    if (FaceDistance < FaceThreshold) return true;
 
-                else return false;
+                    else return false;
+                }
+                else
+                {
+                    return false;
+                }
             }
             else
             {
@@ -124,34 +153,46 @@ public class FaceAuthProvider
         }
     }
 
-
-    public void RegisterIFace(string name, Mat face)
+    /// <summary>
+    /// A method that registers a face and saves its image in the TrainedFaces folder.
+    /// </summary>
+    /// <param name="name">Name of the person.</param>
+    /// <param name="face">Image of a face type Mat.</param>
+    public void RegisterIFace(string name, int count)
     {
-        Random rand = new Random();
-        string filename = "face_" + name + "_" + rand.Next() + ".jpg";
-        const string folder = "TrainedFaces";
-        if (!Directory.Exists(folder))
+        string NameFolder = $"{DbFolderName}\\{name}";
+        for (int i = 0; i < count; i++)
         {
-            Directory.CreateDirectory(folder);
+            Random rand = new Random();
+            string filename = "face_" + name + "_" + rand.Next() + ".jpg";
+
+            if (!Directory.Exists(NameFolder))
+            {
+                Directory.CreateDirectory(NameFolder);
+            }
+
+            filename = Path.Combine(NameFolder, filename);
+
+            FaceDetect()?.ToImage<Gray, byte>().Save(filename);
         }
-
-        filename = Path.Combine(folder, filename);
-
-        face.ToImage<Gray, byte>().Save(filename);
     }
 
+    /// <summary>
+    /// A method that loads a trained face recognizer model from the TrainedFaces folder.
+    /// </summary>
+    /// <exception cref="Exception">Throws an exception if model training fails.</exception>
     public void LoadFaceRecognizer()
     {
-        if (!Directory.Exists(dbFolderName))
+        if (!Directory.Exists(DbFolderName))
         {
-            Directory.CreateDirectory(dbFolderName);
-            Directory.CreateDirectory(AppDomain.CurrentDomain.BaseDirectory + "\\" + dbFolderName);
+            Directory.CreateDirectory(DbFolderName);
+            Directory.CreateDirectory(AppDomain.CurrentDomain.BaseDirectory + "\\" + DbFolderName);
         }
         else
         {
             if (!_isTrained)
             {
-                string[] files = Directory.GetFiles(dbFolderName, "*.jpg", SearchOption.AllDirectories);
+                string[] files = Directory.GetFiles(DbFolderName, "*.jpg", SearchOption.AllDirectories);
 
                 if (files.Length != 0)
                 {
