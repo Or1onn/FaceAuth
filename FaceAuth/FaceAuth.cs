@@ -1,4 +1,6 @@
-﻿using Emgu.CV;
+﻿using System.Drawing;
+using Emgu.CV;
+using Emgu.CV.Dnn;
 using Emgu.CV.Face;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
@@ -8,27 +10,102 @@ namespace FaceAuth;
 public class FaceAuthProvider
 {
     #region Vaiable
-    private int[] FaceLabels;
-    private float FaceDistance = -1;
-    private int FaceThreshold = 3500;
-    private const string dbFolderName = "TrainedFaces";
-    private FaceRecognizer recognizer = new FisherFaceRecognizer(0, 3500);
-    FaceRecognizer.PredictionResult result = new();
+
+    private Net net;
+    private FaceRecognizer Recognizer;
+    private FaceRecognizer.PredictionResult result = new();
+
+
     private List<Image<Gray, byte>> imgList = new();
+    private VideoCapture capture;
+
+    private const string dbFolderName = "TrainedFaces";
+
+    private int[] FaceLabels;
+    private int FaceThreshold = 3500;
+
+    const int Width = 200;
+    const int Height = 200;
+
+    private float FaceDistance = -1;
     private bool _isTrained;
 
+    string config = Directory.GetCurrentDirectory() + "\\Assets\\deploy.prototxt";
+    string model = Directory.GetCurrentDirectory() + "\\Assets\\res10_300x300_ssd_iter_140000_fp16.caffemodel";
+
     #endregion
+
+
+    public FaceAuthProvider()
+    {
+        net = DnnInvoke.ReadNetFromCaffe(config, model);
+        Recognizer = new FisherFaceRecognizer(0, FaceThreshold);
+    }
+
+    public bool CameraInitialize()
+    {
+        if (!capture.IsOpened)
+        {
+            using (capture = new(0))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public Mat? FaceDetect()
+    {
+        using var frame = new Mat();
+
+        capture.Read(frame);
+
+        if (frame.IsEmpty)
+            throw new Exception("Received image is empty");
+
+        // Creating a blob object from a frame to enter the neural network
+        var blob = DnnInvoke.BlobFromImage(frame, 1.0, new Size(250, 250),
+            new MCvScalar(104, 117, 123), false, false);
+
+        net?.SetInput(blob);
+
+
+        // Getting face detections
+        var detections = net?.Forward("detection_out");
+
+        if (detections != null)
+        {
+            int[] dim = detections.SizeOfDimension;
+            float[,,,] values = detections.GetData(true) as float[,,,];
+            for (int i = 0; i < dim[2]; i++)
+            {
+                // Получение координат и вероятности лица
+                float confidence = values[0, 0, i, 2];
+                int x1 = (int)(values[0, 0, i, 3] * frame.Width);
+                int y1 = (int)(values[0, 0, i, 4] * frame.Height);
+
+                // Отрисовка прямоугольника вокруг лица на изображении
+                if (confidence > 0.5) // Фильтрация по порогу вероятности
+                {
+                    return new Mat(frame, new Rectangle(x1, y1, Width, Height)).Clone();
+                }
+            }
+        }
+
+        return null;
+    }
 
     public bool Recognize(Mat face, int FaceThresh = -1)
     {
         if (_isTrained)
         {
-            result = recognizer.Predict(face.ToImage<Gray, byte>());
+            result = Recognizer.Predict(face.ToImage<Gray, byte>());
 
             if (result.Label != -1 && result.Label >= FaceLabels[0] && result.Label <= FaceLabels[^1])
             {
                 FaceDistance = (float)result.Distance;
-                    
+
                 if (FaceThresh > -1) FaceThreshold = FaceThresh;
 
 
@@ -85,12 +162,13 @@ public class FaceAuthProvider
 
 
                     using VectorOfMat vectorOfMat = new VectorOfMat();
-                    using VectorOfInt vectorOfInt = new VectorOfInt(FaceLabels = Enumerable.Range(0, files.Length).ToArray());
+                    using VectorOfInt vectorOfInt =
+                        new VectorOfInt(FaceLabels = Enumerable.Range(0, files.Length).ToArray());
                     vectorOfMat.Push(imgList.ToArray());
 
                     try
                     {
-                        recognizer.Train(vectorOfMat, vectorOfInt);
+                        Recognizer.Train(vectorOfMat, vectorOfInt);
                         _isTrained = true;
                     }
                     catch (Exception e)
