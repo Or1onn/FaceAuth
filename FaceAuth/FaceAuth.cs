@@ -171,7 +171,7 @@ public class FaceAuthProvider
     /// A method that registers a face and saves its image in the TrainedFaces folder.
     /// </summary>
     /// <param name="name">Name of the person.</param>
-    /// <param name="face">Image of a face type Mat.</param>
+    /// <param name="count">Number of faces to register.</param>
     public void RegisterIFace(string name, int count)
     {
         string NameFolder = $"{DbFolderName}\\{name}";
