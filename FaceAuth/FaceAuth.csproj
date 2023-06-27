@@ -14,11 +14,6 @@
 		<Description>A library that allows you to implement Face authentication in any .NET application</Description>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 	</PropertyGroup>
-
-	<ItemGroup>
-		<EmbeddedResource Include="Assets\deploy.prototxt" />
-		<EmbeddedResource Include="Assets\res10_300x300_ssd_iter_140000_fp16.caffemodel" />
-	</ItemGroup>
 	
 	<ItemGroup>
 		<PackageReference Include="Emgu.CV" Version="4.7.0.5276" />
