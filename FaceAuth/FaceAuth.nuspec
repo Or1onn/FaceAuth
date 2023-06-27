@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+    <files>
+        <file src="Assets\deploy.prototxt" target="contentFiles\Assets" />
+        <file src="Assets\res10_300x300_ssd_iter_140000_fp16.caffemodel" target="contentFiles\Assets" />
+    </files>
+</package>

@@ -1,7 +1,5 @@
 ﻿using System.Drawing;
 using System.Reflection;
-using System.Xml.Linq;
-using System.Xml.XPath;
 using Emgu.CV;
 using Emgu.CV.Dnn;
 using Emgu.CV.Face;
@@ -11,7 +9,7 @@ using Emgu.CV.Util;
 namespace FaceAuth;
 
 /// <summary>
-/// A class that generates methods for distinct and identifying faces using a neural network and the FisherFaceRecognizer algorithm.
+/// A class that generates methods for distinct and identifying faces using a neural network and algorithm for linear discriminant analysis by Fisher's criterion.
 /// </summary>
 public class FaceAuthProvider
 {
@@ -35,18 +33,38 @@ public class FaceAuthProvider
     private bool _isTrained;
 
     private const string DbFolderName = "TrainedFaces";
-    
-    private string config = Directory.GetCurrentDirectory() + "\\Assets\\deploy.prototxt";
-    private string model = Directory.GetCurrentDirectory() + "\\Assets\\res10_300x300_ssd_iter_140000_fp16.caffemodel";
+
+    private string config;
+    private string model;
 
     #endregion
-    
+
 
     /// <summary>
-    /// The class constructor that initializes the neural network and the face recognizer.
+    /// The class constructor that initializes the neural network, face recognizer and creating assets files..
     /// </summary>
     public FaceAuthProvider()
     {
+        var assembly = Assembly.GetExecutingAssembly();
+        var assetsPath = Path.Combine(Path.GetDirectoryName(assembly.Location), "Assets");
+        
+        Directory.CreateDirectory(assetsPath);
+        
+        foreach (var resourceName in assembly.GetManifestResourceNames())
+        {
+            var fileName = Path.GetFileName(resourceName).Substring(16);
+            var filePath = Path.Combine(assetsPath, fileName);
+
+            if (resourceName.EndsWith(".prototxt")) config = filePath;
+            
+            else model = filePath;
+
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            using var fileStream = File.Create(filePath);
+            
+            stream?.CopyTo(fileStream);
+        }
+
         net = DnnInvoke.ReadNetFromCaffe(config, model);
         Recognizer = new FisherFaceRecognizer(0, FaceThreshold);
         imgList = new List<Image<Gray, byte>>();
@@ -82,14 +100,12 @@ public class FaceAuthProvider
         if (frame.IsEmpty)
             throw new Exception("Received image is empty");
 
-        // Creating a blob object from a frame to enter the neural network
         var blob = DnnInvoke.BlobFromImage(frame, 1.0, new Size(250, 250),
             new MCvScalar(104, 117, 123), false, false);
 
         net.SetInput(blob);
 
 
-        // Getting face detections
         var detections = net.Forward("detection_out");
 
         if (detections != null)
@@ -98,13 +114,11 @@ public class FaceAuthProvider
             float[,,,] values = detections.GetData(true) as float[,,,];
             for (int i = 0; i < dim[2]; i++)
             {
-                // Получение координат и вероятности лица
                 float confidence = values[0, 0, i, 2];
                 int x1 = (int)(values[0, 0, i, 3] * frame.Width);
                 int y1 = (int)(values[0, 0, i, 4] * frame.Height);
 
-                // Отрисовка прямоугольника вокруг лица на изображении
-                if (confidence > 0.5) // Фильтрация по порогу вероятности
+                if (confidence > 0.5)
                 {
                     return new Mat(frame, new Rectangle(x1, y1, Width, Height)).Clone();
                 }
