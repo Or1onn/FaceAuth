@@ -27,7 +27,7 @@ if (auth.CameraInitialize())
     auth.LoadFaceRecognizer();
     
     //Register
-    auth.RegisterIFace("The name of the person you are registering", 10);
+    auth.RegisterFace("The name of the person you are registering", 10);
 
     // Recognize face
     auth.Recognize();
