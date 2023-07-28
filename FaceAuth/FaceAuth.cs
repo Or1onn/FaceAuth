@@ -1,10 +1,7 @@
 ﻿using System.Drawing;
-using System.Reflection;
 using Emgu.CV;
-using Emgu.CV.Dnn;
-using Emgu.CV.Face;
 using Emgu.CV.Structure;
-using Emgu.CV.Util;
+using FaceONNX;
 
 namespace FaceAuth;
 
@@ -15,27 +12,13 @@ public class FaceAuthProvider
 {
     #region Vaiable
 
-    private Net net;
-    private FaceRecognizer Recognizer;
-    private FaceRecognizer.PredictionResult result;
-
-
-    private List<Image<Gray, byte>> imgList;
+    static FaceDetector faceDetector;
+    static FaceLandmarksExtractor _faceLandmarksExtractor;
+    static FaceEmbedder _faceEmbedder;
+    private Embeddings embeddings;
     private VideoCapture capture;
 
-    private int[] FaceLabels;
-    private int FaceThreshold = 3500;
-
-    public readonly int Width = 196;
-    public readonly int Height = 257;
-
-    private float FaceDistance = -1;
-    private bool _isTrained;
-
-    private const string DbFolderName = "TrainedFaces";
-
-    private string config;
-    private string model;
+    private const string DbFolderName = "RegisteredFaces";
 
     #endregion
 
@@ -45,29 +28,29 @@ public class FaceAuthProvider
     /// </summary>
     public FaceAuthProvider()
     {
-        var assembly = Assembly.GetExecutingAssembly();
-        var assetsPath = Path.Combine(Path.GetDirectoryName(assembly.Location), "Assets");
-        
-        Directory.CreateDirectory(assetsPath);
-        
-        foreach (var resourceName in assembly.GetManifestResourceNames())
+        faceDetector = new FaceDetector();
+        _faceLandmarksExtractor = new FaceLandmarksExtractor();
+        _faceEmbedder = new FaceEmbedder();
+        embeddings = new Embeddings();
+    }
+
+    static float[] GetEmbedding(Bitmap image)
+    {
+        var rectangles = faceDetector.Forward(image);
+        var rectangle = rectangles.FirstOrDefault();
+
+        if (!rectangle.IsEmpty)
         {
-            var fileName = Path.GetFileName(resourceName).Substring(16);
-            var filePath = Path.Combine(assetsPath, fileName);
+            // landmarks
+            var points = _faceLandmarksExtractor.Forward(image, rectangle);
+            var angle = points.GetRotationAngle();
 
-            if (resourceName.EndsWith(".prototxt")) config = filePath;
-            
-            else model = filePath;
-
-            using var stream = assembly.GetManifestResourceStream(resourceName);
-            using var fileStream = File.Create(filePath);
-            
-            stream?.CopyTo(fileStream);
+            // alignment
+            using var aligned = FaceLandmarksExtractor.Align(image, rectangle, angle);
+            return _faceEmbedder.Forward(aligned);
         }
 
-        net = DnnInvoke.ReadNetFromCaffe(config, model);
-        Recognizer = new FisherFaceRecognizer(0, FaceThreshold);
-        imgList = new List<Image<Gray, byte>>();
+        return new float[512];
     }
 
     /// <summary>
@@ -78,20 +61,16 @@ public class FaceAuthProvider
     {
         capture = new VideoCapture(0);
 
-        if (!capture.IsOpened)
-        {
-            return false;
-        }
-
-        return true;
+        return capture.IsOpened;
     }
+
 
     /// <summary>
     /// A method that detects a face in a camera image using a neural network.
     /// </summary>
     /// <returns>Returns a Mat containing the image of the face, or null if no face was found.</returns>
     /// <exception cref="Exception">Throws an exception if the camera image is empty.</exception>
-    public Mat? FaceDetect()
+    public Bitmap FaceDetect()
     {
         using var frame = new Mat();
 
@@ -100,32 +79,7 @@ public class FaceAuthProvider
         if (frame.IsEmpty)
             throw new Exception("Received image is empty");
 
-        var blob = DnnInvoke.BlobFromImage(frame, 1.0, new Size(250, 250),
-            new MCvScalar(104, 117, 123), false, false);
-
-        net.SetInput(blob);
-
-
-        var detections = net.Forward("detection_out");
-
-        if (detections != null)
-        {
-            int[] dim = detections.SizeOfDimension;
-            float[,,,] values = detections.GetData(true) as float[,,,];
-            for (int i = 0; i < dim[2]; i++)
-            {
-                float confidence = values[0, 0, i, 2];
-                int x1 = (int)(values[0, 0, i, 3] * frame.Width);
-                int y1 = (int)(values[0, 0, i, 4] * frame.Height);
-
-                if (confidence > 0.5)
-                {
-                    return new Mat(frame, new Rectangle(x1, y1, Width, Height)).Clone();
-                }
-            }
-        }
-
-        return null;
+        return frame.ToImage<Gray, byte>().ToBitmap();
     }
 
     /// <summary>
@@ -135,36 +89,17 @@ public class FaceAuthProvider
     /// <exception cref="Exception">Throws an exception if the recognition model is not trained.</exception>
     public bool Recognize()
     {
-        if (_isTrained)
-        {
-            Mat? face = FaceDetect();
-            if (face != null)
-            {
-                result = Recognizer.Predict(face.ToImage<Gray, byte>());
+        using var face = FaceDetect();
+        using var bitmap = new Bitmap(face);
+        var embedding = GetEmbedding(bitmap);
+        var proto = embeddings.FromSimilarity(embedding);
+        var label = proto.Item1;
+        var similarity = proto.Item2;
 
-                if (result.Label != -1 && result.Label >= FaceLabels[0] && result.Label <= FaceLabels[^1])
-                {
-                    FaceDistance = (float)result.Distance;
+        if (!String.IsNullOrEmpty(label) && similarity > 0.6f)
+            return true;
 
-
-                    if (FaceDistance < FaceThreshold) return true;
-
-                    else return false;
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                return false;
-            }
-        }
-        else
-        {
-            throw new Exception("Recognition Model not trained");
-        }
+        return false;
     }
 
     /// <summary>
@@ -172,7 +107,7 @@ public class FaceAuthProvider
     /// </summary>
     /// <param name="name">Name of the person.</param>
     /// <param name="count">Number of faces to register.</param>
-    public void RegisterIFace(string name, int count)
+    public void RegisterFace(string name, int count = 1)
     {
         string NameFolder = $"{DbFolderName}\\{name}";
         for (int i = 0; i < count; i++)
@@ -187,7 +122,7 @@ public class FaceAuthProvider
 
             filename = Path.Combine(NameFolder, filename);
 
-            FaceDetect()?.ToImage<Gray, byte>().Save(filename);
+            FaceDetect().Save(filename);
         }
     }
 
@@ -204,33 +139,16 @@ public class FaceAuthProvider
         }
         else
         {
-            if (!_isTrained)
+            string[] regFaces = Directory.GetFiles(DbFolderName, "*.jpg", SearchOption.AllDirectories);
+
+            if (regFaces.Length != 0)
             {
-                string[] files = Directory.GetFiles(DbFolderName, "*.jpg", SearchOption.AllDirectories);
-
-                if (files.Length != 0)
+                foreach (var regFace in regFaces)
                 {
-                    foreach (var file in files)
-                    {
-                        imgList.Add(new Image<Gray, byte>(file));
-                    }
-
-
-                    using VectorOfMat vectorOfMat = new VectorOfMat();
-                    using VectorOfInt vectorOfInt =
-                        new VectorOfInt(FaceLabels = Enumerable.Range(0, files.Length).ToArray());
-                    vectorOfMat.Push(imgList.ToArray());
-
-                    try
-                    {
-                        Recognizer.Train(vectorOfMat, vectorOfInt);
-                        _isTrained = true;
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine(e.Message);
-                        throw;
-                    }
+                    using var bitmap = new Bitmap(regFace);
+                    var embedding = GetEmbedding(bitmap);
+                    var name = Path.GetFileNameWithoutExtension(regFace);
+                    embeddings.Add(embedding, name);
                 }
             }
         }
