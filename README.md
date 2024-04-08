@@ -1,6 +1,6 @@
 # FaceAuth
 
-FaceAuth is a library that provides **the easiest** way to use face authentication in your .NET project in just 4 lines of code.
+FaceAuth is a facial recognition library using neural networks that provides the simplest way to implement face authentication in your .NET project in just 4 lines of code.
 
 ---
 
